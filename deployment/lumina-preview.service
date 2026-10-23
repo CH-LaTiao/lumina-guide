@@ -1,0 +1,27 @@
+# Optional manual service unit. It is NOT installed by any script in this repo.
+#
+# Enabling it makes the watchdog start the C++ frame server and the preview at
+# boot and restart them if they exit. Online queries stay disabled until a
+# DASHSCOPE_API_KEY is injected into the running process; credentials are never
+# stored in this unit or anywhere in the repository.
+#
+# Install only after the product owner approves boot-time startup:
+#   mkdir -p ~/.config/systemd/user
+#   cp deployment/lumina-preview.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now lumina-preview.service
+
+[Unit]
+Description=Lumina guide preview and C++ frame server (manual opt-in)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/lumina-deploy/current
+Environment=LUMINA_FRAME_SOURCE=shm
+ExecStart=%h/lumina-sdk-env/bin/python tools/watchdog.py --interval 10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

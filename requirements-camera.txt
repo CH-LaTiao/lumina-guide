@@ -1,0 +1,2 @@
+# Isolated ARM64 CPython 3.10 diagnostic environment; numpy/cv2 inherited from device.
+pyorbbecsdk2==2.1.2

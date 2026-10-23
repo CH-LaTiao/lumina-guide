@@ -1,0 +1,39 @@
+{
+  "plan_schema_version": 1,
+  "template_version": "online-plan-v1",
+  "request_id": "33333333-3333-4333-8333-333333333333",
+  "snapshot_id": "44444444-4444-4444-8444-444444444444",
+  "scene_id": "find_target",
+  "task_goal": "找到厕所入口",
+  "observations": [
+    {
+      "fact": "画面有厕所指示标识。",
+      "evidence_ids": [
+        "image:example-1"
+      ]
+    }
+  ],
+  "missing_information": [
+    "实际入口和右侧通道是否可用尚未确认"
+  ],
+  "plan": [
+    "确认指示牌箭头。",
+    "观察对应通道并核对本地通行条件。",
+    "继续寻找并确认实际入口。"
+  ],
+  "next_step": {
+    "kind": "observe",
+    "say": "请先停稳，观察指示牌所指的通道，入口还没有确认。",
+    "requires_local_check": false,
+    "conditions": [
+      "用户配合观察"
+    ],
+    "evidence_ids": [
+      "image:example-1"
+    ]
+  },
+  "reobserve_when": [
+    "用户补充观察后",
+    "目标或现场情况改变时"
+  ]
+}

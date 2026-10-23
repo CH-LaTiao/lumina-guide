@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lumina:online-plan:1",
+  "type": "object",
+  "properties": {
+    "plan_schema_version": {
+      "const": 1
+    },
+    "template_version": {
+      "const": "online-plan-v1"
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "scene_id": {
+      "enum": [
+        "general",
+        "find_target",
+        "obstacle",
+        "metro",
+        "stairs",
+        "traffic_signal",
+        "read_sign"
+      ]
+    },
+    "task_goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "minItems": 1,
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "fact",
+          "evidence_ids"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8
+    },
+    "missing_information": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "maxItems": 8
+    },
+    "plan": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "maxItems": 3
+    },
+    "next_step": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "explain",
+            "ask_user",
+            "observe",
+            "stop",
+            "move_candidate",
+            "request_assistance",
+            "done"
+          ]
+        },
+        "say": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "requires_local_check": {
+          "type": "boolean"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 8
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "kind",
+        "say",
+        "requires_local_check",
+        "conditions",
+        "evidence_ids"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "move_candidate"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "requires_local_check": {
+                "const": true
+              },
+              "conditions": {
+                "minItems": 1
+              },
+              "evidence_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reobserve_when": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "maxItems": 8
+    }
+  },
+  "required": [
+    "plan_schema_version",
+    "template_version",
+    "request_id",
+    "snapshot_id",
+    "scene_id",
+    "task_goal",
+    "observations",
+    "missing_information",
+    "plan",
+    "next_step",
+    "reobserve_when"
+  ],
+  "additionalProperties": false
+}

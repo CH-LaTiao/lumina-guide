@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>灵犀 · 实时感知调试台</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0c1420;color:#e9f0f7;font:16px system-ui,sans-serif}
+main{max-width:1800px;margin:auto;padding:18px}h1{font-size:26px;margin:6px 0}h2{font-size:19px;margin:0 0 10px}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px}.muted{color:#a6b7cb;font-size:14px;line-height:1.6}
+#badge,.tag{background:#26374e;border-radius:16px;padding:8px 14px;font-size:14px;white-space:nowrap}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}.card{background:#162234;border:1px solid #293b52;padding:16px;border-radius:12px;margin-bottom:12px;min-width:0}
+.cards .card{margin:0}.metric{font-size:24px;display:block;margin:6px 0;color:#8de3dc}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.perception-board{display:grid;grid-template-columns:minmax(0,2fr) minmax(250px,1fr) minmax(250px,1fr);gap:12px;margin:14px 0;align-items:start}
+.perception-board>.card{margin:0;padding:14px;height:100%}.perception-board h2{font-size:17px}.perception-geometry{grid-column:1/-1}
+.perception-board table{font-size:12px}.perception-board td,.perception-board th{padding:6px}.perception-board #speech-text{font-size:19px;min-height:46px}
+#screen{background:#03080e;border-radius:10px;overflow:hidden;min-height:180px;position:relative}img{display:block;width:100%;border-radius:8px}img[hidden]{display:none}
+#view-wrap{position:relative;overflow:hidden}#ground-line-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#ground-line-canvas.editing{pointer-events:auto;cursor:ns-resize;touch-action:none}#ground-line-state{font-size:13px}
+#missing{padding:60px;text-align:center;color:#ffd28c}.notice{background:#30291c;border-left:3px solid #e7ac52;padding:12px;color:#ffda98;font-size:14px;line-height:1.6}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font-size:13px;line-height:1.6}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}td,th{text-align:left;padding:10px;border-bottom:1px solid #293b52}
+button,.link{display:inline-block;background:#257f7c;border:1px solid #3d9e97;color:white;border-radius:7px;padding:10px 14px;cursor:pointer;font:inherit;text-decoration:none;margin:4px 4px 4px 0}
+button.secondary,.link.secondary{background:#26374e;border-color:#41536b}button:disabled{opacity:.45;cursor:default}
+input:not([type=checkbox]),select{background:#0c1420;border:1px solid #41536b;color:#e9f0f7;border-radius:6px;padding:10px;font:inherit;max-width:100%}
+#question{width:100%;margin:12px 0}label{line-height:1.8}#speech-text{font-size:21px;line-height:1.6;min-height:72px}
+#motors{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;max-width:460px;margin:10px auto}.motor{padding:9px 5px;text-align:center;border:1px solid #41536b;border-radius:12px;background:#0c1420;color:#839bb5;font-size:12px}
+.motor.active{background:#684719;border-color:#f5bb5c;color:#fff2d4;box-shadow:0 0 16px #f5bb5c33}.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.history{border-top:1px solid #293b52;margin-top:16px;padding-top:12px}
+#readiness-actions code{display:block;white-space:pre-wrap;overflow-wrap:anywhere;background:#0c1420;border:1px solid #293b52;border-radius:6px;padding:8px;margin-top:6px;color:#9fd8d3}
+@media(max-width:1100px){.perception-board{grid-template-columns:1fr 1fr}.perception-video{grid-column:1/-1}.perception-geometry{grid-column:1/-1}}
+@media(max-width:800px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.perception-board{grid-template-columns:1fr}.perception-video,.perception-geometry{grid-column:auto}header{align-items:flex-start;flex-direction:column}td,th{padding:7px;font-size:12px}}
+</style>
+<main>
+<header><div><div class="muted" id="software">LUMINA / 开发原型</div><h1>实时感知调试台</h1><div class="muted">Jetson Orin Nano Super × Gemini 336L</div></div><span id="badge" role="status">正在连接</span></header>
+<section class="card" style="margin-top:20px"><h2>站立观察 / 步行简洁提示</h2>
+<div class="row"><button id="mode-auto">自动适应</button><button id="mode-standing" class="secondary">站立观察</button><button id="mode-walking" class="secondary">步行提示测试</button><button id="mode-paused" class="secondary">暂停提示</button></div>
+<p id="guidance-mode" role="status">等待模式状态</p><p id="guidance-speech" style="font-size:26px" aria-live="polite"></p><p id="guidance-summary" class="muted"></p>
+<p class="muted" id="guidance-detail"></p>
+<table><thead><tr><th id="direction-heading">方向基准</th><th>空间候选</th><th>地面覆盖格</th><th>最近障碍</th><th>高度类别</th></tr></thead><tbody id="corridors"></tbody></table>
+<p class="notice">当前相机在桌面：箭头用于比较视野内的候选空间。灰色未知、红色受阻、黄色待确认。身体标定只改变方向坐标基准，仍不代表已验证的绕行路线；相机画面运动不等于用户在走路。</p>
+</section>
+<section class="perception-board">
+<section class="card perception-video"><h2>实时画面与深度</h2>
+<div id="screen"><div id="view-wrap"><img id="view" alt="左侧实时RGB及三维物体簇框，右侧对齐深度及统计区域" hidden><canvas id="ground-line-canvas" aria-label="地面线"></canvas></div><div id="missing">等待相机画面…</div></div>
+<div class="row"><button id="ground-line-edit" class="secondary">调整地面线</button><button id="ground-line-reset" class="secondary">恢复默认</button><span id="ground-line-state" class="muted">默认地面线 55% · 以下为地面</span></div>
+<p class="muted">调整时上下拖动画面；水平线以下统一作为地面参与拟合，线以上不作为地面。地面线绑定本次相机连接，换相机或重连后恢复默认55%。</p>
+<p class="muted">左：G编号框为同帧三维物体簇，青色点为候选平面；不代表语义物体或可通行空间。右：固定深度统计区，黑色为无效深度。画面仅供诊断，超过500毫秒隐藏。</p>
+<table><thead><tr><th>画面区域</th><th>有效覆盖</th><th>深度P10</th><th>诊断状态</th></tr></thead><tbody id="regions"></tbody></table>
+<p id="hazards">等待C++近物诊断</p>
+<p class="notice">当前配合白手杖。三维几何尚处于台架诊断，身体标定和可通行空间未验证。语音与振动模拟跟随同一份稳定引导；地面或障碍不确定时保持停止提示。</p>
+</section>
+<section class="card"><div class="row"><h2>语音与振动模拟</h2><span class="tag">物理输出关闭</span></div>
+<p id="speech-text" role="status">等待新鲜感知</p><p class="muted" id="feedback-state">固定话术 / 本地优先级仲裁</p>
+<div id="motors" aria-label="六个虚拟振动通道"></div>
+<p class="muted">上、下两排显示当前的虚拟振动方向；未做身体标定时按相机画面区域显示。实体振动板暂缓接入。</p>
+<button id="pause-feedback" class="secondary">暂停模拟</button><button id="listen" disabled>电脑试听当前提示</button>
+<p class="muted">电脑试听播放同一条短提示；Jetson语音由本地语音模块通过NoMachine输出。实体振动板暂缓接入。</p>
+<details class="history"><summary>最近模拟事件</summary><pre id="feedback-events"></pre></details>
+</section>
+<section class="card"><h2>目标检测 · 对应原始帧</h2><p class="muted" id="detstatus">等待检测</p><p class="muted"><span id="detector">加载中</span> · <span id="provider">读取实际运行后端</span></p><img id="detview" hidden alt="对应原始帧上的真实YOLO检测框"><p class="muted">YOLO11n / COCO80。结果超过2秒隐藏；中心深度可能混入背景。通用类别尚不覆盖楼梯、厕所标识等专项能力。</p></section>
+<section class="card perception-geometry"><h2>三维几何 · 地面与高度诊断</h2>
+<p id="geometry-state" role="status">等待相机参数</p><p id="geometry-camera" class="muted"></p>
+<table><thead><tr><th>物体簇</th><th>相机方向</th><th>光轴距离 P20</th><th>相机上方范围</th><th>相对候选地面高度</th></tr></thead><tbody id="geometry-objects"></tbody></table>
+<p class="muted">距离为相机光轴Z，非身体水平距离。高度范围是采样点的P10—P90；未确认地面时保留“未知”。物体簇可能合并相接物体，稀疏采样可能遗漏细杆；目前不识别上下楼梯或推荐左右绕行。</p>
+<details><summary>静止台架测量参考（可选）</summary>
+<p class="muted">相机固定且无左右侧倾时，输入实际测量值。参考只对当前连接有效，120秒自动失效；相机移动、支架变化或断线后须清除并重新测量。此操作不是佩戴标定。</p>
+<div class="row"><label>镜头离地 / 米 <input id="bench-height" type="number" min="0.2" max="2.5" step="0.01" placeholder="实测数值"></label><label>向下俯角 / 度 <input id="bench-pitch" type="number" min="-20" max="60" step="1" placeholder="水平为0"></label></div>
+<label><input id="bench-confirm" type="checkbox">已测量高度与俯角，相机静止固定、无左右侧倾</label>
+<div><button id="bench-set">应用120秒台架参考</button><button id="bench-clear" class="secondary">清除参考</button></div><p id="bench-result" role="status"></p>
+</details></section>
+</section>
+<section class="card"><h2>运行就绪度</h2>
+<p id="readiness-stage" role="status">等待检查</p>
+<div id="readiness-checks" class="row muted"></div>
+<p id="readiness-blockers" class="notice">等待门控检查。</p>
+<ul id="readiness-actions" class="muted"></ul>
+<p class="muted">诊断就绪不等于真实通行授权；移动许可必须保持关闭，直到硬件、受控场地和佩戴行走验收完成。</p>
+</section>
+<section class="card"><h2>NoMachine 语音交互</h2>
+<p id="audio-state" role="status">读取音频路由…</p>
+<div class="row"><button id="audio-test">播放 Jetson 测试语音</button><button id="audio-auto" class="secondary">开启固定提示自动播报</button><button id="audio-stop" class="secondary">停止语音 / 取消录音</button></div>
+<label><input type="checkbox" id="audio-consent">同意本次录音5秒并发送到百炼转成文字</label>
+<div><button id="audio-record">录音5秒</button><button id="audio-use" class="secondary">把识别文字填入问题</button><button id="audio-answer" class="secondary">朗读当前审核通过的回答</button></div>
+<p id="audio-transcript" aria-live="polite"></p><p id="audio-message" role="status"></p>
+<p class="muted">按键录音；语音转文字后可先修改再提问。图片上传单独确认。固定提示在 Jetson 本地合成，关闭自动播报或切换模式会停止当前语音。NoMachine为开发音频桥。</p>
+</section>
+<div class="cards">
+<div class="card">相机帧率<b class="metric" id="camerafps">—</b><span class="muted">相机实际输出 / 秒</span></div>
+<div class="card">处理组数<b class="metric" id="fps">—</b><span class="muted">主循环消费 / 秒</span></div>
+ <div class="card">有效深度<b class="metric" id="coverage">—</b><span class="muted">非零像素比例</span></div>
+ <div class="card">画面年龄<b class="metric" id="age">—</b><span class="muted">毫秒 / 超时隐藏</span></div>
+<div class="card">中心测距 · 红外深度<b class="metric" id="range">—</b><span class="muted">米 / 中心15×15中位数</span></div>
+<div class="card">RGB质量<b class="metric" id="rgbq">—</b><span class="muted">过曝/过暗时测距仍可用</span></div>
+</div>
+<section class="card"><h2>手工身体坐标标定（可选）</h2>
+<p class="muted">先应用并等待台架地面候选稳定，再用卷尺测量镜头相对身体中心的位置。前移、右移以身体中心为原点，偏航角为相机前方相对身体正前方向右的夹角。标定只保存30分钟、绑定当前相机连接，不写文件；启用后同时作为安装地面参考，使相机画面移动时仍可持续检查地面。暂停、换相机、断线或安装变化后需重新确认。</p>
+<div class="row"><label>镜头前移 / 米 <input id="body-forward" type="number" min="-0.5" max="0.5" step="0.01" placeholder="可为负"></label><label>镜头右移 / 米 <input id="body-right" type="number" min="-0.5" max="0.5" step="0.01" placeholder="右为正"></label><label>相机偏航 / 度 <input id="body-yaw" type="number" min="-45" max="45" step="1" placeholder="右偏为正"></label><label>含白手杖最小净宽 / 米 <input id="body-width" type="number" min="0.35" max="1.5" step="0.01" placeholder="实测值"></label></div>
+<label><input id="body-confirm" type="checkbox">上述数值为卷尺/角度实测，且本会话内相机与背心相对位置不再改变</label>
+<div><button id="body-set">应用30分钟身体标定</button><button id="body-clear" class="secondary">清除身体标定</button></div><p id="body-result" role="status"></p>
+<p class="muted">当前只完成手工安装变换、地面跟踪与误差字段，没有IMU姿态跟踪、身体包络或真实通行授权。</p>
+</section>
+<section class="card"><h2>本地IMU步态标定</h2>
+<p class="muted">在有陪护、无障碍、可随时停下的安全直道进行。先站立采样5秒，再准备步行并点击第二阶段；结果只保存在Jetson本地，完成后自动热加载。</p>
+<label><input id="gait-confirm" type="checkbox">已验证安全场地和助手在场，设备安装保持不变</label>
+<div><button id="gait-still">静止采样5秒</button><button id="gait-walk" class="secondary">步行采样8秒</button><button id="gait-reset" class="secondary">重置标定流程</button></div>
+<p id="gait-result" role="status">等待步态标定</p>
+</section>
+<section class="card"><h2>千问 · 场景理解与任务方案</h2>
+<p class="muted">按需发送当前RGB图片与问题到已配置的百炼业务空间。方案保留为候选，移动指令进入本地门控，当前全部阻断。</p>
+<label>场景 <select id="scene"><option value="auto">按问题自动选择场景</option><option value="general">一般场景</option><option value="find_target">寻找目标</option><option value="obstacle">障碍方案</option><option value="metro">地铁任务</option><option value="stairs">楼梯</option><option value="traffic_signal">交通信号</option><option value="read_sign">读取标识</option></select></label>
+<input id="question" maxlength="300" aria-label="向千问提出问题" placeholder="例如：我要乘坐2号线，从画面里的指示牌能判断下一步需要确认什么？">
+<label><input type="checkbox" id="consent">同意本次发送当前画面与问题到百炼</label>
+<label><input type="checkbox" id="review">审阅模式（30秒预算，仅人工核对，不进入行动路径）</label>
+<label><input type="checkbox" id="auto-help-consent">允许自动求助在台阶不确定或持续停车无路线时上传当前画面</label>
+<div><button id="ask" disabled>发送本次问题</button><button id="cancel" class="secondary">取消在线任务</button><button id="newtask" class="secondary">开始新任务</button></div>
+<div class="row"><button id="auto-help-toggle" class="secondary">开启自动求助</button><span class="muted" id="auto-help-state">自动求助关闭</span></div>
+<p id="query-state" role="status">未查询</p><pre id="answer"></pre>
+</section>
+<section class="card"><h2>人工反馈与提示词修订</h2>
+<p class="muted">下载CSV后用Excel打开。保留原始字段，只修改 corrected_scene（场景）、corrected_answer（期望回答）、corrected_prompt（提示词候选）、review_note（备注）。另存为UTF-8 CSV再导入。</p>
+<div class="row"><a class="link" href="/reviews.csv" download>导出记录供Excel编辑</a><input type="file" id="review-file" accept=".csv" aria-label="选择修订后的UTF-8 CSV"><button id="import-review" class="secondary">导入人工修订</button><a class="link secondary" href="/reviews/candidates" download="prompt-candidates.json">导出提示词候选</a></div>
+<p id="review-state" role="status">读取记录…</p><p class="muted">每次修订保存新版本；重复导入自动跳过，冲突整批回退。导入结果用于后续评测，不会自动训练模型或替换当前提示词。</p>
+<h3>场景提示词 · 试答与版本管理</h3>
+<p class="muted">corrected_prompt 填写该场景的补充规则，corrected_answer 填期望回答。先从修订建立候选，再将相机朝向对应场景试答。共用规则与输出格式始终保留；启用只更新场景提示词，不训练模型权重。</p>
+<div class="row"><button id="prompt-sync" class="secondary">从修订建立候选</button><button id="prompt-refresh" class="secondary">刷新版本与试答</button><a class="link secondary" href="/prompts/report.csv" download>导出试答评测表</a></div>
+<label>候选版本 <select id="prompt-version" aria-label="候选提示词版本"></select></label>
+<pre id="prompt-preview">暂无候选</pre>
+<input id="prompt-question" maxlength="300" aria-label="提示词试答问题" placeholder="还原相应场景后，填写希望模型回答的问题">
+<label><input type="checkbox" id="prompt-consent">同意本次把当前画面和问题发送到百炼进行候选试答（30秒预算）</label>
+<button id="prompt-trial">用当前画面试答</button>
+<p id="prompt-state" role="status">读取版本…</p>
+<label>试答记录 <select id="prompt-result" aria-label="选择试答记录"></select></label>
+<pre id="prompt-answer">选择试答记录查看回答与期望结果</pre>
+<label><input id="prompt-scene-ok" type="checkbox">已核对试答时现场，识别事实正确</label>
+<label><input id="prompt-answer-ok" type="checkbox">回答解决了本次问题</label>
+<label><input id="prompt-step-ok" type="checkbox">下一步建议简洁、合理，没有未经核验的行动指令</label>
+<input id="prompt-note" maxlength="2000" aria-label="评测和版本变更说明" placeholder="评测结论或启用/回滚原因（必填）">
+<div class="row"><button id="prompt-pass">记录评测通过</button><button id="prompt-fail" class="secondary">记录评测不通过</button><button id="prompt-activate" disabled>在此场景启用候选</button><button id="prompt-rollback" class="secondary">回滚此场景上次变更</button><button id="prompt-default" class="secondary">恢复此场景内置提示词</button></div>
+<p class="muted">试答不进入语音引导，当前版本不随导入或评测自动改变。通过单次试答后可手动启用，并继续增加不同条件的样本；一次通过不代表整个场景已经验证。试答不默认保存图片，请在核对当时现场后记录结论。</p>
+<pre id="prompt-active">当前场景版本</pre>
+</section>
+<section class="card"><h2>运行事件</h2><pre id="events"></pre><p class="muted">相机断开自动重试，重连后先检查10帧。预览不默认保存图像；问答文字、提示词和模拟事件保存在本机SQLite。</p></section>
+</main>
+<script src="/live_view.js?v=0.9.9"></script>
+<script src="/prompt_ui.js"></script>
+</html>
