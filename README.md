@@ -2,6 +2,11 @@
 
 面向视障人士的可穿戴 RGB-D 场景理解与通行提示原型，运行于 **Jetson Orin Nano + Orbbec Gemini 336L**。
 
+> **资助说明 / Funding**  
+> 本项目为香港数码港（Cyberport Hong Kong）资助项目。  
+> This project is funded by Cyberport Hong Kong.  
+> 资助关系不代表数码港对产品功能、安全性、医疗器械合规性或商业可行性作出认证或背书。
+
 > **公开演示版说明 / Public demo notice**  
 > 本仓库是公开演示版，仅展示可公开的架构、界面和部分实现。商业化核心版本为闭源软件，关键算法、参数、模型集成、部署配置和现场适配细节未公开，保留技术细节。公开版本会不定期更新，不承诺固定更新周期或完整支持。  
 > This repository is a public demo. The commercial core version is closed source; key algorithms, parameters, model integration and deployment details are withheld. Public updates are provided from time to time without a fixed schedule.  
@@ -17,6 +22,7 @@
 - **商业核心版**：闭源，包含更完整的核心算法、参数、模型集成、部署配置和项目适配；不在本仓库公开。
 - **更新节奏**：公开演示版不定期更新，不承诺固定版本节奏。
 - **联系**：商业授权、合作和商业版本咨询请联系 **wzr0411@gmail.com**。
+- **资助**：本项目为香港数码港（Cyberport Hong Kong）资助项目；资助不构成产品认证或安全背书。
 
 ## 当前能力
 
