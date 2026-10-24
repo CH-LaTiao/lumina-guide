@@ -1,4 +1,8 @@
+<p align="center"><img src="docs/assets/lumina-banner.svg" alt="LUMINA Guide — wearable RGB-D assistance prototype; vest schematic" width="100%" /></p>
+
 # LUMINA Guide
+
+[![Static checks](https://github.com/CH-LaTiao/lumina-guide/actions/workflows/static-checks.yml/badge.svg)](https://github.com/CH-LaTiao/lumina-guide/actions/workflows/static-checks.yml)
 
 [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md)
 
@@ -25,6 +29,8 @@ A wearable RGB-D scene-understanding and navigation-cue prototype built for **Je
 - Unified perception dashboard
 
 ## Architecture
+
+![Public system overview](docs/assets/system-overview.svg)
 
 ```text
 Gemini 336L

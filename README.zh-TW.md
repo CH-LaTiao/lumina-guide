@@ -1,4 +1,8 @@
+<p align="center"><img src="docs/assets/lumina-banner.svg" alt="LUMINA Guide：可穿戴RGB-D輔助原型與背心形態示意" width="100%" /></p>
+
 # LUMINA Guide / 靈犀導盲背心
+
+[![Static checks](https://github.com/CH-LaTiao/lumina-guide/actions/workflows/static-checks.yml/badge.svg)](https://github.com/CH-LaTiao/lumina-guide/actions/workflows/static-checks.yml)
 
 [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md)
 
@@ -27,6 +31,8 @@
 - **統一感知台**：影像、語音震動、目標檢測同屏，三維幾何在下方。
 
 ## 架構
+
+![Public system overview](docs/assets/system-overview.svg)
 
 ```text
 Gemini 336L

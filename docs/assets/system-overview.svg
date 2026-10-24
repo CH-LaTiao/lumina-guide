@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="410" viewBox="0 0 1280 410" role="img" aria-labelledby="title desc">
+  <title id="title">LUMINA Guide public system overview</title>
+  <desc id="desc">Gemini RGB-D and IMU feed a C++ frame server, shared memory and local perception. Guidance supplies local speech, virtual haptics and a dashboard. Optional cloud review requires consent and cannot directly control movement.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#568b99"/></marker></defs>
+  <rect width="1280" height="410" rx="20" fill="#f3f7fa"/>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <text x="36" y="42" font-size="14" font-weight="700" letter-spacing="2" fill="#3f697a">LOCAL PERCEPTION, EXPLICIT CLOUD REVIEW</text>
+    <g stroke="#568b99" stroke-width="2" fill="none" marker-end="url(#arrow)"><path d="M236 150H275"/><path d="M484 150H523"/><path d="M758 150H797"/><path d="M997 150H1036"/></g>
+    <g fill="#fff" stroke="#cbdbe3"><rect x="36" y="88" width="200" height="124" rx="12"/><rect x="282" y="88" width="202" height="124" rx="12"/><rect x="530" y="88" width="228" height="124" rx="12"/><rect x="1043" y="88" width="201" height="124" rx="12"/></g>
+    <rect x="804" y="88" width="193" height="124" rx="12" fill="#123c4d"/>
+    <g font-size="20" font-weight="600" fill="#163e50"><text x="54" y="124">Gemini 336L</text><text x="300" y="124">C++ frame-server</text><text x="549" y="124">Local perception</text><text x="1061" y="124">Feedback</text></g>
+    <text x="823" y="124" font-size="20" font-weight="600" fill="#fff">Guidance</text>
+    <g font-size="14" fill="#527080"><text x="54" y="157">RGB-D + IMU</text><text x="54" y="181">USB 3.0 input</text><text x="300" y="157">Exclusive camera owner</text><text x="300" y="181">Shared-memory publisher</text><text x="549" y="157">YOLO · Depth · Geometry</text><text x="549" y="181">Freshness + frame identity</text><text x="1061" y="157">Local speech · Virtual haptics</text><text x="1061" y="181">Live dashboard</text></g>
+    <g font-size="14" fill="#c2e6e8"><text x="823" y="157">Standing / walking</text><text x="823" y="181">Concise, state-aware cues</text></g>
+    <path d="M644 212V263" stroke="#568b99" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <rect x="360" y="270" width="568" height="83" rx="12" fill="#e5eef5" stroke="#bdd0dc"/>
+    <text x="380" y="299" font-size="17" font-weight="600" fill="#254d66">Optional cloud review</text>
+    <text x="380" y="327" font-size="14" fill="#527080">Explicit consent → Image + question → Reviewed candidate answer</text>
+    <text x="36" y="383" font-size="13" fill="#527080">Prototype boundary: physical movement permission disabled. Cloud answers do not directly control movement.</text>
+  </g>
+</svg>

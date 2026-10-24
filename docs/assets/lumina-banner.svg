@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
+  <title id="title">LUMINA Guide — Perceive. Understand. Assist.</title>
+  <desc id="desc">A wearable RGB-D assistance research prototype. A schematic vest links depth perception, scene understanding and concise cues. Public demo.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#091321"/><stop offset="1" stop-color="#133747"/></linearGradient>
+    <linearGradient id="vest" x2="1" y2="1"><stop stop-color="#21495a"/><stop offset="1" stop-color="#0e2535"/></linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#80c9d0" stroke-opacity=".07"/></pattern>
+  </defs>
+  <rect width="1280" height="440" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="440" rx="24" fill="url(#grid)"/>
+  <path d="M760 0V440" stroke="#71d3cf" stroke-opacity=".15"/>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <rect x="48" y="38" width="216" height="30" rx="15" fill="#54dbbb" fill-opacity=".12" stroke="#54dbbb" stroke-opacity=".4"/>
+    <text x="65" y="58" font-size="12" font-weight="700" letter-spacing="2" fill="#83efcf">WEARABLE ASSISTANCE</text>
+    <text x="46" y="150" font-size="67" font-weight="700" letter-spacing="-2" fill="#f4fafb">LUMINA <tspan fill="#7de6d0">Guide</tspan></text>
+    <text x="49" y="198" font-size="27" fill="#e0edf2">Perceive. Understand. Assist.</text>
+    <text x="49" y="239" font-size="17" fill="#a6c2cd">RGB-D perception · Scene understanding · Concise cues</text>
+    <g font-size="13" fill="#d6e8ed">
+      <rect x="48" y="283" width="217" height="38" rx="8" fill="#203f50"/><text x="63" y="307">JETSON ORIN NANO SUPER</text>
+      <rect x="276" y="283" width="174" height="38" rx="8" fill="#203f50"/><text x="292" y="307">ORBBEC GEMINI 336L</text>
+    </g>
+    <text x="49" y="391" font-size="13" letter-spacing="1.2" fill="#8eafb9">PUBLIC DEMO / RESEARCH PROTOTYPE</text>
+    <g transform="translate(824 48)">
+      <text x="0" y="12" font-size="11" letter-spacing="2" fill="#94b9c7">WEARABLE SYSTEM / SCHEMATIC</text>
+      <path d="M107 52 L152 43 Q170 88 192 43 L237 52 L269 109 L248 136 L245 278 Q172 303 99 278 L96 136 L75 109 Z" fill="url(#vest)" stroke="#6598a5" stroke-width="2"/>
+      <path d="M171 93V285M101 163H243" fill="none" stroke="#719da5" stroke-opacity=".5"/>
+      <rect x="132" y="106" width="79" height="28" rx="8" fill="#0b1827" stroke="#7de6d0" stroke-width="2"/>
+      <circle cx="148" cy="120" r="6" fill="#7de6d0"/><circle cx="195" cy="120" r="6" fill="#7de6d0"/>
+      <path d="M133 105L101 72M211 105L243 72" stroke="#7de6d0" stroke-dasharray="4 5" opacity=".6"/>
+      <g fill="#7de6d0"><circle cx="120" cy="190" r="7"/><circle cx="120" cy="226" r="7"/><circle cx="171" cy="190" r="7"/><circle cx="171" cy="226" r="7"/><circle cx="222" cy="190" r="7"/><circle cx="222" cy="226" r="7"/></g>
+      <path d="M213 120H303M230 226H303" fill="none" stroke="#6999a8"/>
+      <text x="309" y="124" font-size="12" fill="#d1e7ed">RGB-D</text>
+      <text x="309" y="222" font-size="12" fill="#d1e7ed">6-channel</text><text x="309" y="239" font-size="12" fill="#d1e7ed">simulation</text>
+      <text x="87" y="337" font-size="13" fill="#a6c2cd">Designed to complement a white cane</text>
+    </g>
+  </g>
+</svg>
