@@ -30,7 +30,9 @@ A wearable RGB-D scene-understanding and navigation-cue prototype built for **Je
 
 ## Architecture
 
-![Public system overview](docs/assets/system-overview.svg)
+![Animated system data flow](docs/assets/system-overview.gif)
+
+*Animated data-flow illustration, not live device telemetry. [Static alternative](docs/assets/system-overview.svg).*
 
 ```text
 Gemini 336L
@@ -46,6 +48,25 @@ Gemini 336L
 The frame server owns the camera, Python consumers read shared memory, walking mode emits one concise action cue, and cloud results never directly control motors or movement. Stale perception or a disconnected camera clears the previous route.
 
 See [architecture](docs/architecture.md), [Jetson setup](docs/setup-jetson.md) and [safety/privacy](docs/safety-and-privacy.md).
+
+## How the modules work together
+
+The system follows a capture → perception → guidance → feedback → review loop. Depth geometry supplies spatial evidence, object detection adds class information, and IMU measurements inform motion state. Local guidance combines this evidence into concise cues. Optional cloud review addresses user questions about complex scenes through a separate, explicitly authorized path.
+
+| Module | Responsibility | Engineering approach |
+| :--- | :--- | :--- |
+| Capture | Supply RGB-D and IMU measurements | Exclusive C++ camera ownership, shared-memory publishing, frame identity and timestamps |
+| Perception | Combine object classes and spatial evidence | CUDA-preferred ONNX inference, frame-associated detections, depth geometry and ground fitting |
+| Guidance | Adapt information to standing or walking | Scene summaries, concise walking cues, multi-frame confirmation, risk priority and stale-route withdrawal |
+| Feedback | Keep speech and virtual haptics consistent | Shared guidance state, local Piper speech and priority handling |
+| Cloud review | Answer questions about an authorized snapshot | Scene prompts, structured output validation and review rules; no direct movement control |
+| Prompt iteration | Turn human feedback into versioned configuration | CSV review, trial answers, human assessment, activation and rollback; no claim of model-weight retraining |
+
+## Engineering foundations
+
+The project includes more than the perception pipeline: a unified diagnostic dashboard, frame/session freshness checks, regression tests, deterministic algorithm scenarios, runtime probes, trace recording, release identity, rollback and runtime-data backup tools. These provide observability and reproducible investigation across development stages. Hardware-free CI and tabletop diagnostics remain distinct from field acceptance.
+
+The next validation areas are real wearing and walking latency, cue clarity, difficult surfaces and obstacles, physical haptic integration, power and endurance, and scenario-specific human evaluation. Combining navigation direction with local perception is a development direction; metro routing and station-level guidance are not presented as completed capabilities. The scope of the public demo remains governed by [NOTICE](NOTICE.en.md).
 
 ## Repository layout
 
