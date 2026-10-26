@@ -43,6 +43,7 @@ input:not([type=checkbox]),select{background:#0c1420;border:1px solid #41536b;co
 <div class="row"><button id="ground-line-edit" class="secondary">调整地面线</button><button id="ground-line-reset" class="secondary">恢复默认</button><span id="ground-line-state" class="muted">默认地面线 55% · 以下为地面</span></div>
 <p class="muted">调整时上下拖动画面；水平线以下统一作为地面参与拟合，线以上不作为地面。地面线绑定本次相机连接，换相机或重连后恢复默认55%。</p>
 <p class="muted">左：G编号框为同帧三维物体簇，青色点为候选平面；不代表语义物体或可通行空间。右：固定深度统计区，黑色为无效深度。画面仅供诊断，超过500毫秒隐藏。</p>
+<p class="muted" id="pipeline-timing">感知与预览分别更新，各自保留原始帧号和帧龄。</p>
 <table><thead><tr><th>画面区域</th><th>有效覆盖</th><th>深度P10</th><th>诊断状态</th></tr></thead><tbody id="regions"></tbody></table>
 <p id="hazards">等待C++近物诊断</p>
 <p class="notice">当前配合白手杖。三维几何尚处于台架诊断，身体标定和可通行空间未验证。语音与振动模拟跟随同一份稳定引导；地面或障碍不确定时保持停止提示。</p>
@@ -50,7 +51,7 @@ input:not([type=checkbox]),select{background:#0c1420;border:1px solid #41536b;co
 <section class="card"><div class="row"><h2>语音与振动模拟</h2><span class="tag">物理输出关闭</span></div>
 <p id="speech-text" role="status">等待新鲜感知</p><p class="muted" id="feedback-state">固定话术 / 本地优先级仲裁</p>
 <div id="motors" aria-label="六个虚拟振动通道"></div>
-<p class="muted">上、下两排显示当前的虚拟振动方向；未做身体标定时按相机画面区域显示。实体振动板暂缓接入。</p>
+<p class="muted">近物提示时，亮起通道表示障碍所在区域；语音中的“偏左 / 偏右”表示建议调整方向，两者含义不同。未做身体标定时按相机画面区域显示。实体振动板暂缓接入。</p>
 <button id="pause-feedback" class="secondary">暂停模拟</button><button id="listen" disabled>电脑试听当前提示</button>
 <p class="muted">电脑试听播放同一条短提示；Jetson语音由本地语音模块通过NoMachine输出。实体振动板暂缓接入。</p>
 <details class="history"><summary>最近模拟事件</summary><pre id="feedback-events"></pre></details>
@@ -110,7 +111,8 @@ input:not([type=checkbox]),select{background:#0c1420;border:1px solid #41536b;co
 <label><input type="checkbox" id="consent">同意本次发送当前画面与问题到百炼</label>
 <label><input type="checkbox" id="review">审阅模式（30秒预算，仅人工核对，不进入行动路径）</label>
 <label><input type="checkbox" id="auto-help-consent">允许自动求助在台阶不确定或持续停车无路线时上传当前画面</label>
-<div><button id="ask" disabled>发送本次问题</button><button id="cancel" class="secondary">取消在线任务</button><button id="newtask" class="secondary">开始新任务</button></div>
+<div><button id="ask" disabled>发送新问题</button><button id="continue-task" class="secondary" disabled>继续当前任务</button><button id="cancel" class="secondary">取消在线任务</button><button id="newtask" class="secondary">清空当前任务</button></div>
+<p id="task-context" class="muted">新问题独立开始；继续任务会保留原目标和场景，每次均需重新授权当前图片。</p>
 <div class="row"><button id="auto-help-toggle" class="secondary">开启自动求助</button><span class="muted" id="auto-help-state">自动求助关闭</span></div>
 <p id="query-state" role="status">未查询</p><pre id="answer"></pre>
 </section>
@@ -139,6 +141,6 @@ input:not([type=checkbox]),select{background:#0c1420;border:1px solid #41536b;co
 </section>
 <section class="card"><h2>运行事件</h2><pre id="events"></pre><p class="muted">相机断开自动重试，重连后先检查10帧。预览不默认保存图像；问答文字、提示词和模拟事件保存在本机SQLite。</p></section>
 </main>
-<script src="/live_view.js?v=0.9.9"></script>
+<script src="/live_view.js?v=0.11.3"></script>
 <script src="/prompt_ui.js"></script>
 </html>

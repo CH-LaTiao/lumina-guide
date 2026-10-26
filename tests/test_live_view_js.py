@@ -14,7 +14,10 @@ class LiveViewJavaScriptTests(unittest.TestCase):
     def test_page_cache_busts_the_fixed_script(self):
         root=Path(__file__).resolve().parents[1]
         page=(root/'tools/live_view.html').read_text(encoding='utf-8')
-        self.assertIn('/live_view.js?v=0.9.9',page)
+        import sys
+        sys.path.insert(0,str(root/'tools'))
+        from software_version import VERSION
+        self.assertIn('/live_view.js?v='+VERSION,page)
 
     def test_perception_board_and_ground_line_controls_exist(self):
         root=Path(__file__).resolve().parents[1]

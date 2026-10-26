@@ -14,8 +14,8 @@ class PolicyTests(unittest.TestCase):
     def test_direct_lan_needs_no_cookie_or_code(self):
         policy = AccessPolicy(8765, True)
         self.assertTrue(policy.authorized('127.0.0.1'))
-        self.assertTrue(policy.authorized('192.168.137.1'))
-        self.assertFalse(AccessPolicy(8765).authorized('192.168.137.1'))
+        self.assertTrue(policy.authorized('10.0.0.10'))
+        self.assertFalse(AccessPolicy(8765).authorized('10.0.0.10'))
     def test_host_must_match_accepted_interface_not_attacker_dns(self):
         policy = AccessPolicy(8765, True)
         self.assertTrue(policy.valid_host('10.0.0.42:8765', '10.0.0.42'))
@@ -38,7 +38,7 @@ class HttpTests(unittest.TestCase):
             access_policy = policy
             def setup(self):
                 super().setup()
-                self.client_address = ('192.168.137.1', self.client_address[1])
+                self.client_address = ('10.0.0.10', self.client_address[1])
             def log_message(self, *args): pass
             def do_GET(self):
                 if self.access_guard(): self.access_reply(200, b'live-frame')

@@ -14,3 +14,16 @@
 - 在线问答和自动求助必须单独授权，且只上传当前快照。
 - 运行数据库、日志、模型、API Key、设备序列号和原始图像不进入 Git。
 - 如果公开演示，必须使用合成图、脱敏图或明确获得同意的现场图。
+
+## 提交前检查
+
+公开仓库新增 `tools/check_public_secrets.py`，检查常见密钥格式、明文凭据、专属工作空间地址、相机编号、个人账户路径及私有运行文件。它只输出文件位置和问题类别，不打印命中值。
+
+```bash
+python3 tools/check_public_secrets.py
+python3 tools/check_public_secrets.py --staged --history
+```
+
+默认检查跟踪文件与未忽略的新文件；`--staged` 检查实际暂存内容，`--history` 额外扫描可达历史中的凭据模式。CI 运行当前版本检查。规则扫描不能保证识别所有敏感信息，发布前仍需核对差异与素材来源。
+
+私有配置保留在本机进程环境中：`DASHSCOPE_API_KEY`、`LUMINA_API_HOST`、`LUMINA_SERIAL` 和模型路径均不应写入公开配置。`.gitignore` 不能移除已经提交的秘密；若发现真实凭据进入历史，应先撤销并更换凭据，再协调历史清理。

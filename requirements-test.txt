@@ -1,0 +1,4 @@
+# Hardware-free regression dependencies; no camera SDK, model or API Key required.
+numpy>=1.24,<3
+opencv-python-headless>=4.8,<5
+jsonschema>=4.18,<5

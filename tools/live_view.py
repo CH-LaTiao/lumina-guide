@@ -22,10 +22,9 @@ from box_depth import link as link_boxes
 from ground_line import GroundLine
 from visual_quality import center_range, rgb_quality
 
-# Preview render cadence. The camera runs at 30 pairs/s; rendering depth colour,
-# geometry overlay and two JPEG encodes costs ~40-50ms, so 20Hz is the practical
-# ceiling on this board while keeping CUDA detection on its own thread.
-PREVIEW_INTERVAL_S=0.05
+# Preview work is capped at 10Hz; perception consumes a separate latest-frame slot.
+# Original capture timestamps remain authoritative for every freshness decision.
+PREVIEW_INTERVAL_S=0.1
 
 
 def trim_heap():
@@ -36,6 +35,26 @@ def trim_heap():
         return bool(ctypes.CDLL('libc.so.6').malloc_trim(0))
     except (OSError,AttributeError):
         return False
+
+def guidance_is_current(state,expected):
+    """A speech cue remains valid only while its published decision remains usable."""
+    current=state.read()[0].get('guidance') or {}
+    return (all(current.get(key)==expected.get(key) for key in ('mode','event_id','speech','priority'))
+        and (not expected.get('fresh') or current.get('fresh') is True))
+
+
+def queue_reviewed_answer(state,online,voice):
+    from voice_io import answer_text
+    result=online.read();rid=result.get('request_id')
+    text=answer_text(result,(state.read()[0].get('guidance') or {}).get('mode'))
+    def valid():
+        info=state.read()[0];guide=info.get('guidance') or {};current=online.read()
+        return (guide.get('mode')=='STANDING' and guide.get('fresh') is True
+            and (guide.get('priority') or 0)<90
+            and current.get('request_id')==rid and current.get('state')=='CANDIDATE')
+    if not valid():raise ValueError('回答或当前感知已过期，请重新观察后提问')
+    return voice.say(text,valid=valid)
+
 
 def advance_guidance(state,guidance,feedback,voice,detector=None):
     """One decision writer, independent of browser polling, including detector evidence."""
@@ -51,31 +70,74 @@ def advance_guidance(state,guidance,feedback,voice,detector=None):
         result=guidance.update(info)
         with feedback.lock:
             feedback.update(dict(info,guidance=result),guidance_only=True)
-            state.set_guidance(result,feedback.read())
-        voice.follow(result)
+            state.set_guidance(result,feedback.read(),captured=info.get('frame_captured_monotonic'))
+        voice.follow(result,valid=lambda:guidance_is_current(state,result))
     return result
+
+
+def guidance_loop(state,guidance,feedback,voice,detector,stop):
+    while not stop.is_set():
+        state.perception_event.clear()
+        advance_guidance(state,guidance,feedback,voice,detector)
+        # New perception wakes this writer immediately; timeout still detects a stopped sensor.
+        state.perception_event.wait(.05)
 
 
 class State:
     def __init__(self):
         self.lock=threading.Lock();self.jpeg=None;self.stamp=0;self.snapshot=None
+        self.perception_event=threading.Event()
         self.geometry_frames={};self.guidance={};self.feedback={};self.guidance_stamp=0
+        self.guidance_source_stamp=0;self.preview_stamp=0;self.preview_frame_id=None
+        self.preview_frames=0;self.preview_timings={};self.preview_error=None;self.preview_quality={}
         self.info={'state':'STARTING','object_detection':'not_implemented','aligned':False}
+    def _publish(self,info,snapshot,stamp):
+        if info.get('session_id')!=self.info.get('session_id') or info.get('state') not in ('STREAMING','WARMING'):
+            self.geometry_frames.clear()
+            self.jpeg=None;self.preview_stamp=0;self.preview_frame_id=None
+            self.preview_frames=0;self.preview_timings={};self.preview_quality={};self.preview_error=None
+        self.info=info;self.snapshot=snapshot;self.stamp=stamp
+        geometry=info.get('geometry') or {}
+        if geometry.get('state')=='READY' and snapshot and info.get('frame_id'):
+            self.geometry_frames[info['frame_id']]=(snapshot['captured'],geometry)
+            while len(self.geometry_frames)>24:self.geometry_frames.pop(next(iter(self.geometry_frames)))
+        if info.get('state') not in ('STREAMING','WARMING'):self.geometry_frames.clear()
     def update(self, info, jpeg=None, snapshot=None):
+        """Lifecycle/legacy combined update; faults revoke both publications."""
         with self.lock:
-            self.info=info
-            geometry=info.get('geometry') or {}
-            if geometry.get('state')=='READY' and snapshot and info.get('frame_id'):
-                self.geometry_frames[info['frame_id']]=(snapshot['captured'],geometry)
-                while len(self.geometry_frames)>24:self.geometry_frames.pop(next(iter(self.geometry_frames)))
-            if info.get('state') not in ('STREAMING','WARMING'):self.geometry_frames.clear()
-            self.snapshot=snapshot
-            if jpeg is not None:self.jpeg=jpeg;self.stamp=snapshot['captured'] if snapshot else time.monotonic()
-            else:self.jpeg=None;self.stamp=0
+            stamp=snapshot['captured'] if snapshot else (time.monotonic() if jpeg is not None else 0)
+            self._publish(info,snapshot,stamp)
+            self.jpeg=jpeg;self.preview_stamp=stamp if jpeg is not None else 0
+            self.preview_frame_id=info.get('frame_id') if jpeg is not None else None
+        self.perception_event.set()
+    def publish_perception(self,info,snapshot):
+        with self.lock:self._publish(info,snapshot,snapshot['captured'])
+        self.perception_event.set()
+    def publish_preview(self,frame_id,session_id,captured,jpeg,timings=None,quality=None):
+        with self.lock:
+            if (self.info.get('state') not in ('STREAMING','WARMING')
+                    or session_id!=self.info.get('session_id') or captured>self.stamp
+                    or captured<=self.preview_stamp):return False
+            self.jpeg=jpeg;self.preview_stamp=captured;self.preview_frame_id=frame_id
+            self.preview_frames+=1;self.preview_timings=dict(timings or {})
+            self.preview_quality=dict(quality or {});self.preview_error=None
+            return True
+    def fail_preview(self,session_id,error):
+        with self.lock:
+            if session_id==self.info.get('session_id'):self.preview_error=error
     def read(self):
         with self.lock:
-            age=time.monotonic()-self.stamp if self.stamp else None
-            info=dict(self.info,frame_age_ms=round(age*1000) if age is not None else None)
+            now=time.monotonic();age=now-self.stamp if self.stamp else None
+            preview_age=now-self.preview_stamp if self.preview_stamp else None
+            preview_fresh=self.jpeg is not None and preview_age is not None and 0<=preview_age<=.5
+            info=dict(self.info,frame_age_ms=round(age*1000) if age is not None else None,
+                frame_captured_monotonic=self.stamp or None,
+                preview_frame_id=self.preview_frame_id,preview_frames=self.preview_frames,
+                preview_age_ms=round(preview_age*1000) if preview_age is not None else None,
+                preview_state='READY' if preview_fresh else ('STALE' if self.jpeg is not None else 'WAITING'),
+                preview_timings_ms=dict(self.preview_timings),preview_error=self.preview_error)
+            if self.preview_quality:info['rgb_quality']=dict(self.preview_quality)
+            if self.preview_timings:info['render_ms']=self.preview_timings.get('total_age_ms')
             if self.guidance:info['guidance']=dict(self.guidance)
             if self.feedback:info['feedback']=dict(self.feedback)
             if age is not None and age > .2 and 'geometry' in info:
@@ -87,7 +149,10 @@ class State:
             if age is not None and age>0.5:info['state']='STALE'
             if self.guidance and self.guidance.get('mode')!='PAUSED':
                 limit=(self.guidance.get('policy') or {}).get('fresh_limit_ms',200)
-                expired=(time.monotonic()-self.guidance_stamp>.6 or info['state']!='STREAMING'
+                expired=(now-self.guidance_stamp>.6 or now-self.guidance_source_stamp>limit/1000
+                    or info['state']!='STREAMING'
+                    or (self.guidance.get('frame_id') and info.get('session_id')
+                        and self.guidance['frame_id'].rsplit(':',1)[0]!=info['session_id'])
                     or age is None or age*1000>limit)
                 if expired:
                     walking=self.guidance.get('mode')=='WALKING'
@@ -102,17 +167,18 @@ class State:
                             kind='GUIDANCE:'+info['guidance']['action'],direction=None,channels=[],fresh=False,priority=90,
                             guidance_event_id=self.guidance.get('event_id'),frame_id=self.guidance.get('frame_id'))
                         info['feedback'].update(speech=speech,haptics=[{'channel':i,'active':False} for i in range(6)])
-            return info,self.jpeg if info['state']=='STREAMING' and age is not None and age<=0.5 else None
-    def set_guidance(self,value,feedback=None):
+            return info,self.jpeg if info['state']=='STREAMING' and preview_fresh else None
+    def set_guidance(self,value,feedback=None,captured=None):
         with self.lock:
             self.guidance=dict(value);self.guidance_stamp=time.monotonic()
+            self.guidance_source_stamp=self.stamp if captured is None else captured
             if feedback is not None:self.feedback=dict(feedback)
     def set_feedback(self,value):
         with self.lock:self.feedback=dict(value)
     def peek_jpeg(self):
         """Lightweight read for the MJPEG loop; avoids copying the status dict."""
         with self.lock:
-            return self.jpeg,self.stamp,self.info.get('state')
+            return self.jpeg,self.preview_stamp,self.info.get('state')
     def get_snapshot(self):
         with self.lock:
             if self.info.get('state') != 'STREAMING' or not self.snapshot or time.monotonic()-self.snapshot['captured'] > .5:return None
@@ -162,39 +228,77 @@ class Latest:
             return item
 
 
-def render_loop(draw,state,stop,reference,body_calibration,serial,device_name,laser,session_id,ground_line=None):
-    from guidance import SceneAnalysis, overlay as guidance_overlay
-    analysis=SceneAnalysis()
+def build_preview(packet):
+    """Only diagnostics and drawing; never changes perception or decision timestamps."""
+    from guidance import overlay as guidance_overlay
+    item=packet['item'];started=time.monotonic();timings={}
+    geometry=packet['geometry'];geometry_info=packet['geometry_info']
+    rgb=(geometry.overlay(item['rgb'],geometry_info,packet['mask'])
+        if geometry is not None and packet['mask'] is not None else item['rgb'].copy())
+    timings['geometry_overlay_ms']=(time.monotonic()-started)*1000
+    then=time.monotonic();depth,_,_=depth_panel(item['raw'],item['scale'])
+    quality=rgb_quality(item['rgb'])
+    timings['depth_and_quality_ms']=(time.monotonic()-then)*1000
+    then=time.monotonic();rgb=guidance_overlay(rgb,packet['analysis'])
+    rgb=cv2.resize(rgb,(640,480));image=np.concatenate((rgb,depth),axis=1)
+    cv2.rectangle(image,(0,0),(1280,62),(20,25,30),-1)
+    cv2.putText(image,'GEOMETRY | G boxes: 3D clusters / dots: plane',(12,25),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),1)
+    cv2.putText(image,'DEPTH ROI | NOT object boxes',(650,25),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),1)
+    cv2.putText(image,f"{geometry_info['ground_state']} / {item['frame_id']}",(12,50),cv2.FONT_HERSHEY_SIMPLEX,.52,(80,220,255),1)
+    timings['guidance_overlay_ms']=(time.monotonic()-then)*1000
+    then=time.monotonic();ok,jpg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,80])
+    if not ok:raise RuntimeError('Preview encode failed')
+    timings['jpeg_ms']=(time.monotonic()-then)*1000
+    timings['work_ms']=(time.monotonic()-started)*1000
+    timings['total_age_ms']=(time.monotonic()-item['captured'])*1000
+    return jpg.tobytes(),{key:round(value,1) for key,value in timings.items()},quality
+
+
+def preview_loop(queue,state,stop,session_id):
+    last_trim=time.monotonic()
+    while not stop.is_set():
+        packet=queue.take()
+        if packet is None:queue.event.wait(.02);continue
+        started=time.monotonic();item=packet['item']
+        try:
+            jpeg,timings,quality=build_preview(packet)
+            state.publish_preview(item['frame_id'],session_id,item['captured'],jpeg,timings,quality)
+        except Exception as exc:
+            state.fail_preview(session_id,type(exc).__name__+': '+str(exc)[:120])
+        if time.monotonic()-last_trim>=60:
+            trim_heap();last_trim=time.monotonic()
+        stop.wait(max(0,PREVIEW_INTERVAL_S-(time.monotonic()-started)))
+
+
+def perception_loop(draw,preview,state,stop,reference,body_calibration,serial,device_name,laser,session_id,ground_line=None):
+    from guidance import SceneAnalysis
     from geometry import Geometry
     from native_depth import NativeDepth
-    native=NativeDepth();geometry=None;geometry_error=None;rendered=0
-    geometry_good=None;geometry_good_at=0.;geometry_display=None;last_line_key=None
-    last_trim=time.monotonic()
-    resized=np.empty((480,640,3),np.uint8)
-    composite=np.empty((480,1280,3),np.uint8)
+    analysis=SceneAnalysis();native=NativeDepth();geometry=None;geometry_error=None;processed=0
+    geometry_good=None;geometry_good_at=0.;last_line_key=None;last_publish=None
     while not stop.is_set():
         item=draw.take()
-        if item is None:
-            draw.event.wait(.02);continue
-        started=time.monotonic();now=item['captured'];rgb=item['rgb'];raw=item['raw'];scale=item['scale'];frame_id=item['frame_id']
+        if item is None:draw.event.wait(.02);continue
+        started=time.monotonic();now=item['captured'];raw=item['raw'];scale=item['scale'];frame_id=item['frame_id']
         imu=item.get('imu') or {'state':'UNAVAILABLE','source':'CAMERA_IMU_NOT_LOCALIZATION'}
+        timings={'queue_wait_ms':(started-now)*1000}
         try:
-            quality=rgb_quality(rgb)
             line_info=(ground_line.read(session_id,item['model']['sha256'],item['model']['height'])
                 if ground_line else {'state':'DEFAULT','active':False,'line_y':item['model']['height']*.55})
             line_y=line_info.get('line_y')
             if line_y!=last_line_key:
                 geometry_good=None;geometry_good_at=0.;last_line_key=line_y
             geometry_info={'state':'UNAVAILABLE','objects':[],'ground_state':'UNKNOWN','movement_allowed':False}
+            mask=None;then=time.monotonic()
             try:
                 if geometry is None and geometry_error is None:
                     geometry=Geometry(item['model'],native,reference,body_calibration)
                 if geometry is not None:
                     geometry_info,mask=geometry.evaluate(raw,scale,(time.monotonic()-now)*1000,frame_id,session_id,
                         ground_line_y=line_y)
-                    rgb=geometry.overlay(rgb,geometry_info,mask)
             except (ValueError,AttributeError,RuntimeError) as exc:
                 geometry_error=str(exc);geometry=None
+            timings['geometry_ms']=(time.monotonic()-then)*1000
             if geometry_error:geometry_info['error']=geometry_error
             geometry_line={**line_info,**(geometry_info.get('ground_line') or {})}
             geometry_info['ground_line']=geometry_line
@@ -203,62 +307,58 @@ def render_loop(draw,state,stop,reference,body_calibration,serial,device_name,la
                 geometry_good=dict(geometry_info);geometry_good_at=render_clock
                 geometry_display=dict(geometry_good,display_hold=False)
             elif geometry_good is not None and render_clock-geometry_good_at<=1.:
-                geometry_display=dict(geometry_good,display_hold=True,
-                    display_age_ms=round((render_clock-geometry_good_at)*1000,1))
-            else:
-                geometry_display=dict(geometry_info,display_hold=False)
+                geometry_display=dict(geometry_good,display_hold=True,display_age_ms=round((render_clock-geometry_good_at)*1000,1))
+            else:geometry_display=dict(geometry_info,display_hold=False)
             if geometry_error:geometry_display['error']=geometry_error
             geometry_display['ground_line']=geometry_line
             calibration=body_calibration.read(session_id,item['model']['sha256'])
             geometry_info['body_calibration']=calibration or {'state':'UNSET'}
             geometry_display['body_calibration']=calibration or {'state':'UNSET'}
-            guide_started=time.monotonic()
+            then=time.monotonic()
             guide_analysis=analysis.evaluate(item['rgb'],raw,scale,item['model'],geometry_info,now,
                 session_id,calibration,item['hazards'])
-            guide_ms=(time.monotonic()-guide_started)*1000
-            body_mount_ground=(calibration is not None
-                and geometry_info.get('ground_state')=='REFERENCE_MATCHED_CANDIDATE')
+            timings['analysis_ms']=(time.monotonic()-then)*1000
+            body_mount_ground=(calibration is not None and geometry_info.get('ground_state')=='REFERENCE_MATCHED_CANDIDATE')
             if guide_analysis['motion_hint']['state']=='CAMERA_MOVING' and not body_mount_ground:
                 reference.set({'clear':True},{})
-                guide_analysis['corridors']=[]
-                guide_analysis['fine']=[]
+                guide_analysis['corridors']=[];guide_analysis['fine']=[]
                 geometry_info=dict(geometry_info,ground_state='REFERENCE_INVALIDATED_MOTION',reference=None)
-                geometry_display=dict(geometry_info,body_calibration=geometry_display.get('body_calibration'),
-                    display_hold=False)
+                geometry_display=dict(geometry_info,body_calibration=geometry_display.get('body_calibration'),display_hold=False)
             elif guide_analysis['motion_hint']['state']=='CAMERA_MOVING':
                 geometry_info['motion_policy']='BODY_MOUNT_GROUND_TRACKING'
-            depth,regions,coverage=depth_panel(raw,scale)
-            range_center=center_range(raw,scale)
-            rgb=guidance_overlay(rgb,guide_analysis)
-            rgb=cv2.resize(rgb,(640,480),dst=resized)
-            composite[:, :640]=rgb;composite[:, 640:]=depth
-            image=composite
-            cv2.rectangle(image,(0,0),(1280,62),(20,25,30),-1)
-            cv2.putText(image,'GEOMETRY | G boxes: 3D clusters / dots: plane',(12,25),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),1)
-            cv2.putText(image,'DEPTH ROI | NOT object boxes',(650,25),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),1)
-            cv2.putText(image,f"{geometry_info['ground_state']} / {frame_id}",(12,50),cv2.FONT_HERSHEY_SIMPLEX,.52,(80,220,255),1)
-            ok,jpg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,80])
-            if not ok:raise RuntimeError('Preview encode failed')
-            rendered+=1
-            if time.monotonic()-last_trim>=60:
-                trim_heap();last_trim=time.monotonic()
-            state.update({'state':'STREAMING' if rendered>=10 else 'WARMING','device':device_name,'serial':serial,'paired_frames':item['count'],
-                'camera_fps':item['camera_fps'],'range_center_m':range_center,'rgb_quality':quality,'laser':laser,
-                'session_id':session_id,'frame_id':frame_id,'warmup_remaining':max(0,10-rendered),
-                'capture_pairs_per_s':item['rate'],'rate_window_s':5,'preview_frames':rendered,'valid_depth_ratio':coverage,
-                'align_ms':round(item['align_ms'],1),'render_ms':round((time.monotonic()-now)*1000,1),
-                'guidance_ms':round(guide_ms,1),
+            processed+=1;published=time.monotonic()
+            timings['publish_age_ms']=(published-now)*1000
+            timings['publish_gap_ms']=(published-last_publish)*1000 if last_publish is not None else None
+            last_publish=published
+            regions=[{'region':name,'valid_ratio':hazard['coverage'],'depth_p10_m':hazard['distance_p10_m'],
+                'status':'UNKNOWN' if hazard['level']==0 else 'DEPTH ONLY'}
+                for name,hazard in zip(('IMAGE LEFT','IMAGE CENTER','IMAGE RIGHT'),item['hazards'])]
+            info={'state':'STREAMING' if processed>=10 else 'WARMING','device':device_name,'serial':serial,
+                'paired_frames':item['count'],'camera_fps':item['camera_fps'],'range_center_m':center_range(raw,scale),
+                'rgb_quality':{'state':'UNAVAILABLE'},'laser':laser,'session_id':session_id,'frame_id':frame_id,
+                'warmup_remaining':max(0,10-processed),'capture_pairs_per_s':item['rate'],'rate_window_s':5,
+                'perception_frames':processed,'valid_depth_ratio':float((raw>0).mean()),
+                'align_ms':round(item['align_ms'],1),'guidance_ms':round(timings['analysis_ms'],1),
+                'perception_timings_ms':{key:round(value,1) if value is not None else None for key,value in timings.items()},
                 'regions':regions,'aligned':True,'object_detection':'separate_snapshot','native_depth':item['hazards'],
-                'native_depth_ms':item['native_ms'],'hazard_scope':'image ROI diagnostic; geometry is separate and does not drive feedback',
+                'native_depth_ms':item['native_ms'],'hazard_scope':'image ROI diagnostic; geometry is separate',
                 'geometry':geometry_info,'geometry_display':geometry_display,'ground_line':geometry_line,
-                'guidance_analysis':guide_analysis,'imu':imu,
-                'real_output':False,'depth_us':item['depth_us'],'color_us':item['color_us']},
-                jpg.tobytes(),{'rgb':item['rgb'],'captured':now,'frame_id':frame_id})
+                'guidance_analysis':guide_analysis,'imu':imu,'real_output':False,
+                'depth_us':item['depth_us'],'color_us':item['color_us']}
+            state.publish_perception(info,{'rgb':item['rgb'],'captured':now,'frame_id':frame_id})
+            preview.put({'item':item,'geometry':geometry,'geometry_info':geometry_info,'mask':mask,'analysis':guide_analysis})
         except Exception as exc:
             state.update({'state':'FAULT','device':device_name,'serial':serial,
-                'error':type(exc).__name__+': '+str(exc)[:120],'real_output':False},None)
-        elapsed=time.monotonic()-started
-        if elapsed<PREVIEW_INTERVAL_S:time.sleep(PREVIEW_INTERVAL_S-elapsed)
+                'error':type(exc).__name__+': '+str(exc)[:120],'real_output':False})
+
+
+def render_loop(draw,state,stop,reference,body_calibration,serial,device_name,laser,session_id,ground_line=None):
+    """Compatibility entry point: bounded preview work cannot hold perception publication."""
+    preview=Latest()
+    worker=threading.Thread(target=preview_loop,args=(preview,state,stop,session_id),daemon=True)
+    worker.start()
+    try:perception_loop(draw,preview,state,stop,reference,body_calibration,serial,device_name,laser,session_id,ground_line)
+    finally:worker.join(timeout=1)
 
 
 def capture_shm(state,stop,serial,detector=None,reference=None,body_calibration=None,ground_line=None):
@@ -549,9 +649,10 @@ def main():
                 if self.path=='/reviews/import':result=reviews.import_csv(body);code=200
                 elif self.path=='/prompts/sync':result=online.prompts.sync_candidates();code=200
                 elif self.path=='/prompts/trial':
-                    if guidance.mode!='STANDING':raise ValueError('请先站立观察，再试答提示词')
-                    version=online.prompts.version(payload.get('version'))
-                    rid=online.submit(payload.get('question'),version['scene'],state.get_snapshot(),payload.get('consent'),True,version['version'])
+                    with guidance.lock:
+                        if guidance.mode!='STANDING':raise ValueError('请先站立观察，再试答提示词')
+                        version=online.prompts.version(payload.get('version'))
+                        rid=online.submit(payload.get('question'),version['scene'],state.get_snapshot(),payload.get('consent'),True,version['version'])
                     result={'request_id':rid};code=202
                 elif self.path=='/prompts/assess':
                     result=online.prompts.assess_trial(payload.get('request_id'),payload.get('accepted'),payload.get('checks'),payload.get('note'));code=200
@@ -570,17 +671,23 @@ def main():
                 elif self.path=='/audio/auto':result=voice.set_auto(payload.get('enabled'));code=200
                 elif self.path=='/audio/test':voice.say('灵犀语音测试。现在是桌面测试模式。');result={'state':'QUEUED'};code=202
                 elif self.path=='/audio/record':
-                    if guidance.mode!='STANDING':raise ValueError('请先站立，再录音提问')
-                    result=voice.record(payload.get('consent'));code=202
+                    with guidance.lock:
+                        if guidance.mode!='STANDING':raise ValueError('请先站立，再录音提问')
+                        result=voice.record(payload.get('consent'));code=202
                 elif self.path=='/audio/cancel':result=voice.cancel();code=200
                 elif self.path=='/audio/answer':
-                    voice.say(answer_text(online.read(),guidance.mode));result={'state':'QUEUED'};code=202
+                    queue_reviewed_answer(state,online,voice);result={'state':'QUEUED'};code=202
                 elif self.path=='/query':
-                    if guidance.mode=='WALKING':raise ValueError('请先切换站立观察，再进行详细场景问答')
-                    rid=online.submit(payload.get('question'),payload.get('scene'),state.get_snapshot(),payload.get('consent'),payload.get('review') is True)
+                    with guidance.lock:
+                        if guidance.mode!='STANDING':raise ValueError('请先切换站立观察，再进行详细场景问答')
+                        rid=online.submit(payload.get('question'),payload.get('scene'),state.get_snapshot(),payload.get('consent'),payload.get('review') is True,
+                            continue_task=payload.get('continue_task',False))
                     result={'request_id':rid};code=202
                 elif self.path=='/online/auto_help':
-                    result=auto_help.configure(payload.get('enabled') is True,payload.get('consent') is True);code=200
+                    with guidance.lock:
+                        result=auto_help.configure(payload.get('enabled') is True,payload.get('consent') is True);code=200
+                        if not auto_help.enabled and online.read().get('request_id')==auto_help.last_request_id:
+                            online.cancel()
                 elif self.path=='/imu/gait_calibration':
                     action=payload.get('action')
                     if action=='start_still':
@@ -604,30 +711,37 @@ def main():
     signal.signal(signal.SIGTERM,shutdown);signal.signal(signal.SIGINT,shutdown)
     def capture_with_context(s,event,serial,d):return capture(s,event,serial,d,reference,body_calibration,ground_line)
     worker=threading.Thread(target=supervise_capture,args=(capture_with_context,state,stop,a.serial,detector,online.invalidate_camera),daemon=True);worker.start()
-    def guidance_loop():
-        while not stop.is_set():
-            advance_guidance(state,guidance,feedback,voice,detector)
-            stop.wait(.05)
-    guidance_worker=threading.Thread(target=guidance_loop,daemon=True);guidance_worker.start()
+    guidance_worker=threading.Thread(target=guidance_loop,args=(state,guidance,feedback,voice,detector,stop),daemon=True);guidance_worker.start()
     def auto_help_loop():
         nonlocal auto_spoken
         while not stop.is_set():
             info=state.read()[0];info['online']=online.read();info['readiness']=assess(info)
             event=auto_help.evaluate(info)
             if event:
-                snapshot=state.get_snapshot()
-                if snapshot is not None:
-                    try:
-                        rid=online.submit(event['question'],event['scene'],snapshot,True,True)
-                        auto_help.note_submitted(rid)
-                    except ValueError:pass
+                with guidance.lock:
+                    current=state.read()[0];current['online']=online.read()
+                    # A pause, mode switch or manual question may have happened since evaluate().
+                    current_mode=(current.get('guidance') or {}).get('mode')
+                    event=auto_help.evaluate(current) if current_mode==guidance.mode else None
+                    snapshot=state.get_snapshot() if event else None
+                    if snapshot is not None:
+                        try:
+                            rid=online.submit(event['question'],event['scene'],snapshot,True,True)
+                            auto_help.note_submitted(rid)
+                        except ValueError:pass
             result=online.read();rid=result.get('request_id')
             if (auto_help.enabled and rid and rid==auto_help.last_request_id
                     and rid!=auto_spoken):
                 text=safe_auto_speech(result)
                 if text:
                     try:
-                        if voice.say(text,25):auto_spoken=rid
+                        def still_current(request_id=rid):
+                            current=online.read();guide=(state.read()[0].get('guidance') or {})
+                            return (auto_help.enabled and current.get('request_id')==request_id
+                                and current.get('state')=='CANDIDATE' and guide.get('fresh') is True
+                                and guide.get('mode') in ('STANDING','WALKING')
+                                and (guide.get('priority') or 0)<90)
+                        if still_current() and voice.say(text,25,valid=still_current):auto_spoken=rid
                     except ValueError:pass
             stop.wait(.5)
     auto_worker=threading.Thread(target=auto_help_loop,daemon=True);auto_worker.start()

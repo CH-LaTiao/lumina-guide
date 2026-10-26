@@ -3,7 +3,7 @@ import json
 import subprocess
 from pathlib import Path
 
-VERSION='0.9.9'
+VERSION='0.11.3'
 
 def identity():
     root=Path(__file__).resolve().parents[1]

@@ -48,7 +48,9 @@ class PipelineTests(unittest.TestCase):
             detector.read.return_value=({'status':'READY','age_ms':50,'frame_id':'s:1','objects':[
                 {'label':'chair','bbox':[280,300,360,380],'depth_patch_m':.75}]},None)
             r=advance_guidance(s,g,feedback,voice,detector)
-            self.assertIn('CROSS_MODAL_HAZARD',r['reasons']);voice.follow.assert_called_once_with(r)
+            self.assertIn('CROSS_MODAL_HAZARD',r['reasons']);voice.follow.assert_called_once()
+            self.assertEqual(voice.follow.call_args.args,(r,))
+            self.assertTrue(voice.follow.call_args.kwargs['valid']())
             for _ in range(10):
                 status=s.read()[0]
                 self.assertEqual(status['guidance']['event_id'],status['feedback']['speech']['guidance_event_id'])

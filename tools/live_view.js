@@ -162,14 +162,22 @@ async function tick() {
     const round=(q.task&&q.task.rounds?' · 任务第'+q.task.rounds+'/'+q.task.max_rounds+'轮':'');
     const flags=(q.safety_flags&&q.safety_flags.length?' · 安全提示'+q.safety_flags.length+'项':'');
     $('query-state').textContent=q.configured?((q.prompt_trial?'候选试答 · ':q.review?'审阅 · ':'')+(q.note? q.state+' · '+q.note:q.state)+round+flags+timing+(q.prompt_version?' · 提示词 '+q.prompt_version.slice(0,16):'')):'在线密钥未配置；本地感知仍可运行';
-    $('ask').disabled=q.busy||!q.configured||s.state!=='STREAMING';
+    const canAsk=!q.busy&&q.configured&&s.state==='STREAMING'&&s.guidance?.mode==='STANDING';
+    $('ask').disabled=!canAsk;
+    $('continue-task').disabled=!canAsk||!q.task?.can_continue;
+    $('task-context').textContent=q.task?.goal?('当前目标：'+q.task.goal+' · 场景：'+q.task.scene+' · '+q.task.rounds+'/'+q.task.max_rounds+'轮。'+(q.task.can_continue?'继续任务沿用该场景，重新观察当前图片。':'可发送新问题独立开始。')):'新问题独立开始；继续任务会保留原目标和场景，每次均需重新授权当前图片。';
     $('answer').textContent=q.plan?JSON.stringify(q.plan,null,2):(q.error||'');
     if(s.state!=='STREAMING'){
       const message=(stateNames[s.state]||s.state)+(s.retry_seconds?' · '+s.retry_seconds+'秒后重试':'');offline(message);
       $('missing').textContent=message+(s.error?' / '+(s.error==='Configured camera not found'?'未发现指定的336L，请检查USB连接':s.error):'');return;
     }
     if(!streaming){$('view').src='/stream.mjpg?t='+Date.now();streaming=true;}
-    $('view').hidden=false;$('missing').hidden=true;$('badge').textContent='实时采集中';drawGroundLine();
+    const previewReady=s.preview_state===undefined||s.preview_state==='READY';
+    $('view').hidden=!previewReady;$('missing').hidden=previewReady;
+    if(!previewReady)$('missing').textContent=s.preview_error?'预览绘制异常，感知仍在单独运行':'感知正在运行，等待新鲜预览画面…';
+    $('badge').textContent=previewReady?'实时采集中':'感知运行 / 预览等待';drawGroundLine();
+    const pt=s.perception_timings_ms||{},vt=s.preview_timings_ms||{};
+    $('pipeline-timing').textContent='感知帧 '+s.frame_id+' · 帧龄 '+s.frame_age_ms+'ms · 预览帧 '+(s.preview_frame_id||'等待')+' / '+(s.preview_age_ms??'—')+'ms'+(pt.publish_age_ms==null?'':' · 感知发布 '+pt.publish_age_ms+'ms')+(vt.jpeg_ms==null?'':' · JPEG '+vt.jpeg_ms+'ms');
     $('fps').textContent=s.capture_pairs_per_s.toFixed(1);$('coverage').textContent=(s.valid_depth_ratio*100).toFixed(1)+'%';$('age').textContent=s.frame_age_ms;
     $('camerafps').textContent=s.camera_fps!=null?s.camera_fps.toFixed(1):'—';
     $('range').textContent=s.range_center_m!=null?s.range_center_m.toFixed(2):'—';
@@ -213,11 +221,13 @@ async function post(path,body) {
   const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
   const value=await r.json();if(!r.ok)throw Error(value.error||'请求失败');return value;
 }
-$('ask').onclick=async()=>{
+async function askQuestion(continueTask){
   if(!$('consent').checked){$('query-state').textContent='请先确认本次图片上传';return;}
-  try{await post('/query',{question:$('question').value,scene:$('scene').value,consent:true,review:$('review').checked});$('consent').checked=false;}
+  try{await post('/query',{question:$('question').value,scene:continueTask?'auto':$('scene').value,consent:true,review:$('review').checked,continue_task:continueTask});$('consent').checked=false;}
   catch(e){$('query-state').textContent=e.message;}
-};
+}
+$('ask').onclick=()=>askQuestion(false);
+$('continue-task').onclick=()=>askQuestion(true);
 $('cancel').onclick=async()=>{try{await post('/cancel',{});}catch(e){event(e.message);}};
 $('newtask').onclick=async()=>{try{await post('/task/reset',{});$('query-state').textContent='已开始新任务';}catch(e){event(e.message);}};
 $('bench-set').onclick=async()=>{try{

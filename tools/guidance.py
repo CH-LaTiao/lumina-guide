@@ -14,6 +14,8 @@ from body_calibration import map_native_regions, to_body_axes
 from geometry import make_rays
 
 LABELS={'LEFT':'左侧','CENTER':'前方','RIGHT':'右侧'}
+STANDING_HINT_MIN_DEPTH_M=1.5
+STANDING_HINT_MARGIN_M=.4
 LABEL_ZH={'person':'行人','chair':'椅子','couch':'沙发','bed':'床','dining table':'桌子',
     'tv':'显示器','laptop':'笔记本电脑','bottle':'瓶子','backpack':'背包','handbag':'包',
     'suitcase':'行李箱','umbrella':'伞','car':'汽车','bicycle':'自行车','motorcycle':'摩托车',
@@ -308,19 +310,66 @@ def near_region_label(indices):
     return {0:'左侧',1:'前方',2:'右侧'}.get(next(iter(regions),None),'附近')
 
 
-def standing_near_cue(levels,regions,urgent=True):
+def standing_clearances(info,analysis,direction_frame):
+    """Compare only measured ROI distances in the active direction basis."""
+    native=info.get('native_depth') or []
+    values=[None,None,None]
+    def measured(row):
+        distance=row.get('distance_p10_m');coverage=row.get('coverage')
+        return (float(distance) if type(distance) in (int,float) and math.isfinite(distance)
+            and distance>0 and type(coverage) in (int,float) and math.isfinite(coverage)
+            and coverage>=.6 else None)
+    if direction_frame=='CAMERA':
+        return [measured(native[i]) if i<len(native) else None for i in range(3)]
+    if direction_frame!='BODY' or analysis.get('native_body_ambiguous') is not False:return values
+    directions=('LEFT','CENTER','RIGHT')
+    for row in (analysis.get('native_region_mapping') or {}).get('regions',[]):
+        camera=row.get('camera_region');body=row.get('body_direction')
+        if camera not in directions or body not in directions or row.get('ambiguous') is not False:continue
+        index=directions.index(camera)
+        distance=measured(native[index]) if index<len(native) else None
+        if distance is not None:
+            target=directions.index(body)
+            values[target]=distance if values[target] is None else min(values[target],distance)
+    return values
+
+
+def standing_near_cue(levels,regions,urgent=True,clearances=None,excluded=()):
     """Short action cue for standing diagnostics; never grants movement."""
-    blocked=set(regions)
+    def measured(index):
+        value=clearances[index] if clearances is not None and len(clearances)==3 else None
+        return value if type(value) in (int,float) and math.isfinite(value) and value>0 else None
+    center=measured(1)
+    center_near=levels[1]==2 or (center is not None and center<STANDING_HINT_MIN_DEPTH_M)
+    blocked=set(regions)|set(excluded)|{i for i,level in enumerate(levels) if level in (0,3)}
+    if levels[1]==0:return '前方未知，停。',None
+    if center_near:blocked.add(1)
+    available=[i for i in range(3) if i not in blocked and levels[i] in (1,2)]
+    if any(measured(i) is not None for i in range(3)):
+        choices=[i for i in available if measured(i) is not None
+            and measured(i)>=STANDING_HINT_MIN_DEPTH_M]
+        if choices:
+            best=max(choices,key=lambda i:(measured(i),i==1,i==0))
+            # Preserve the current heading when the measured advantage is marginal.
+            if 1 in choices and center>=measured(best)-STANDING_HINT_MARGIN_M:best=1
+            if best!=1 and 1 not in blocked and center is None:return '前方未知，停。',None
+            label='前方' if center_near else near_region_label(regions)
+            suffix={0:'偏左',1:'走中',2:'偏右'}[best]
+            return label+'近物，'+suffix+'。',('LEFT','CENTER','RIGHT')[best]
+        # Measured but too-close sectors must never regain a direction via legacy fallback.
+        return ('前方近物，停。' if center_near else '近物，停。'),None
     if 1 in blocked:
-        safe=[index for index in (0,2) if levels[index] in (1,2)]
+        safe=[index for index in (0,2) if index in available and levels[index]==1]
         if safe:
             side=min(safe,key=lambda index:(levels[index],index!=0))
             direction='LEFT' if side==0 else 'RIGHT'
             return ('前方近物，往左。' if side==0 else '前方近物，往右。'),direction
-        return ('三面近物，停。' if urgent else '前方近物，慢行。'),None
-    if blocked=={0,2}:return '两侧近物，走中。','CENTER'
-    if blocked=={0}:return '左侧近物，走中。','CENTER'
-    if blocked=={2}:return '右侧近物，走中。','CENTER'
+        return ('前方近物，停。' if center_near else '三面近物，停。'),None
+    if 1 in available:
+        if blocked=={0,2}:return '两侧近物，走中。','CENTER'
+        if blocked=={0}:return '左侧近物，走中。','CENTER'
+        if blocked=={2}:return '右侧近物，走中。','CENTER'
+    if not available:return '近物，停。',None
     return ('近处有物。' if urgent else '近处近物，慢行。'),None
 
 
@@ -591,6 +640,10 @@ class Guidance:
                 body_transform=analysis.get('body_transform') if direction_frame=='BODY' else None,
                 body_frame=direction_frame=='BODY')
             cross_modal=cross_modal_map.get('CENTER')
+            clearances=standing_clearances(info,analysis,direction_frame) if self.mode=='STANDING' else None
+            standing_excluded={('LEFT','CENTER','RIGHT').index(d) for d in cross_modal_map}
+            if direction_frame=='BODY' and analysis.get('native_body_ambiguous') is not False:
+                standing_excluded={0,1,2}
             feedback_regions=sorted({i for i,level in enumerate(levels) if type(level) is int and level>=2}
                 | {('LEFT','CENTER','RIGHT').index(d) for d in cross_modal_map})
             if self.mode=='PAUSED':action='PAUSED'
@@ -652,7 +705,8 @@ class Guidance:
                     reasons+=[('SIDE_HAZARD_DETOUR' if len(near)==1 and near[0] in (0,2)
                         else 'NEAR_HAZARD_DETOUR'),direction_reason]
                 elif self.mode=='STANDING':
-                    speech,direction_hint=standing_near_cue(levels,recent if recent else near,urgent=True)
+                    speech,direction_hint=standing_near_cue(levels,recent if recent else near,urgent=True,
+                        clearances=clearances,excluded=standing_excluded)
                 elif name:
                     speech='停，'+region+'可能'+name+'。'
                     reasons.append('OBJECT_LABEL_CANDIDATE')
@@ -683,7 +737,8 @@ class Guidance:
                         speech=(f"停，前方可能{name}。" if name else '停，前方有物。')
                 else:
                     action='NEAR_OBJECT';priority=60
-                    speech,direction_hint=standing_near_cue(levels,feedback_regions,urgent=False)
+                    speech,direction_hint=standing_near_cue(levels,feedback_regions,urgent=False,
+                        clearances=clearances,excluded=standing_excluded)
                 reasons.append('CROSS_MODAL_HAZARD')
                 if name:reasons.append('DETECTION_LABEL_CANDIDATE')
             elif ((self.mode=='WALKING' and levels[1]==0)
@@ -881,12 +936,21 @@ class Guidance:
                     region=near_region_label(feedback_regions)
                     action='NEAR_OBJECT';priority=50
                     if self.mode=='STANDING':
-                        speech,direction_hint=standing_near_cue(levels,feedback_regions,urgent=False)
+                        speech,direction_hint=standing_near_cue(levels,feedback_regions,urgent=False,
+                            clearances=clearances,excluded=standing_excluded)
                     else:
                         speech='停，'+region+'近物。'
             observed_key=(self.mode,action,speech)
+            hint_directions=('LEFT','CENTER','RIGHT')
+            old_hint=self.stable_direction_hint
+            old_hint_blocked=(old_hint in hint_directions and (len(levels)!=3
+                or levels[hint_directions.index(old_hint)] in (0,3)
+                or hint_directions.index(old_hint) in standing_excluded
+                or (old_hint=='CENTER' and levels[1]==2)
+                or (clearances is not None and clearances[hint_directions.index(old_hint)] is not None
+                    and clearances[hint_directions.index(old_hint)]<STANDING_HINT_MIN_DEPTH_M)))
             if (self.mode=='STANDING' and fresh and action!='UNAVAILABLE' and priority<=self.stable_priority
-                    and self.last_key is not None and observed_key!=self.last_key):
+                    and not old_hint_blocked and self.last_key is not None and observed_key!=self.last_key):
                 if observed_key!=self.pending_key:
                     self.pending_key=observed_key;self.pending_since=now
                 if now-self.pending_since<.3 and self.stable_action is not None:
@@ -919,6 +983,7 @@ class Guidance:
                 'mode_source':self.mode_source,'action':action,'speech':speech,
                 'priority':priority,'event_id':self.event,'frame_id':frame,'candidate':candidate,
                 'direction':candidate,'direction_hint':direction_hint,
+                'standing_clearances_m':clearances if fresh else None,
                 'summary':(describe(corridors)+describe_objects(info,session=session,
                     body_transform=analysis.get('body_transform') if direction_frame=='BODY' else None,
                     body_frame=direction_frame=='BODY')) if fresh else '',

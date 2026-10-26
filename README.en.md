@@ -16,6 +16,8 @@ A wearable RGB-D scene-understanding and navigation-cue prototype built for **Je
 
 > This is a research and engineering prototype, not a medical device or a validated autonomous navigation system. `movement_allowed` remains `false` by default.
 
+**Public update: v0.11.3 (2026-10-27).** Near-wall cues now compare measured space and revoke center hints when the center is near. Perception publishes independently of preview encoding, stale speech is interrupted, and cloud questions explicitly start or continue a task. This sync passed 108 hardware-free regressions and adds a public-content credential guard. See the [update and validation record (Chinese)](docs/public-updates.zh-CN.md). Workspace endpoints and keys stay in local environment configuration.
+
 ## Capabilities
 
 - Real-time 640×480 RGB-D capture, shared-memory publishing, freshness checks and camera recovery

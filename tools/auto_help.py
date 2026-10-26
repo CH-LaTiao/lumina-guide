@@ -1,5 +1,6 @@
 """Consent-bound automatic online help for repeated local uncertainty."""
 import time
+import math
 
 COOLDOWN_S=30.
 STEP_HOLD_S=1.5
@@ -46,15 +47,21 @@ class AutoHelp:
     def evaluate(self,status):
         now=self.clock()
         if not self.enabled:return None
-        mode=(status.get('guidance') or {}).get('mode')
+        guidance=status.get('guidance') or {}
+        mode=guidance.get('mode')
+        age=status.get('frame_age_ms')
         fresh_limit=200 if mode=='WALKING' else 500
-        if status.get('state')!='STREAMING' or not 0<=(status.get('frame_age_ms') or 999)<=fresh_limit:
-            self.since=None;return None
+        if (mode not in ('STANDING','WALKING') or guidance.get('fresh') is not True
+                or status.get('state')!='STREAMING' or type(age) not in (int,float)
+                or not math.isfinite(age) or not 0<=age<=fresh_limit):
+            self.since=None;self.last_event=None;self.last_reason=None;return None
         online=status.get('online') or {}
-        if online.get('busy') or online.get('state') in ('RUNNING','CANDIDATE'):
-            self.since=None;return None
+        if (online.get('busy') or online.get('state') in ('RUNNING','CANDIDATE')
+                or (online.get('task') or {}).get('can_continue')):
+            self.since=None;self.last_event=None;self.last_reason=None;return None
         trigger=self._trigger(status)
-        if not trigger:self.since=None;return None
+        if not trigger:
+            self.since=None;self.last_event=None;self.last_reason=None;return None
         reason,scene,question,hold=trigger
         event=(status.get('session_id'),status.get('guidance',{}).get('event_id'),reason)
         if event!=self.last_event or self.since is None:

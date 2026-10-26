@@ -7,6 +7,8 @@ on:
 jobs:
   static:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,9 +17,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Install hardware-free test dependencies
+        run: python -m pip install -r requirements-test.txt
       - name: Python compile
         run: python -m compileall -q tools tests
+      - name: Public content and credential checks
+        run: python tools/check_public_secrets.py
       - name: JS syntax
         run: node --check tools/live_view.js
       - name: Hardware-free tests
-        run: python -m unittest tests.test_live_view_js tests.test_ground_line -v
+        run: >-
+          python -m unittest -v
+          tests.test_live_view_js tests.test_ground_line tests.test_public_security
+          tests.test_standing_clearance tests.test_online_tasks
+          tests.test_perception_preview tests.test_voice_validity
+          tests.test_auto_help tests.test_online_query
+          tests.test_guidance_pipeline tests.test_voice_io

@@ -38,6 +38,7 @@ PREWARM_PHRASES=(
     '停，左侧有障碍。','停，右侧有障碍。',
     '前方近物，往左。','前方近物，往右。','三面近物，停。',
     '左侧近物，走中。','右侧近物，走中。','两侧近物，走中。',
+    '右侧近物，偏左。','左侧近物，偏右。','前方近物，偏左。','前方近物，偏右。','前方近物，停。',
     '前方近物，慢行。','近处有物。','近处近物，慢行。',
     '停，前方近物。','停，左侧近物。','停，右侧近物。','停，两侧近物。')+tuple(
         phrase for direction in WALKING_DIRECTIONS for phrase in (
@@ -53,7 +54,8 @@ CORE_PREWARM_PHRASES=(
     '前方可走。','左侧可走。','右侧可走。',
     '停，改走前方。','停，改走左侧。','停，改走右侧。',
     '前方近物，往左。','前方近物，往右。',
-    '左侧近物，走中。','右侧近物，走中。','两侧近物，走中。')
+    '左侧近物，走中。','右侧近物，走中。','两侧近物，走中。',
+    '右侧近物，偏左。','左侧近物，偏右。','前方近物，停。')
 EXTRA_PREWARM_PHRASES=tuple(text for text in PREWARM_PHRASES
     if text not in CORE_PREWARM_PHRASES)
 
@@ -116,7 +118,7 @@ class VoiceIO:
         self.lock=threading.RLock();self.stop_event=threading.Event();self.cancel_record=threading.Event()
         self.route={'available':False};self.status={'state':'IDLE','transcript':''}
         self.auto=False;self.pending=None;self.child=None;self.generation=0;self.priority=0
-        self.cache={};self.last_event=None;self.neural_lock=threading.Lock()
+        self.cache={};self.last_event=None;self.guidance_mode=None;self.neural_lock=threading.Lock()
         self.synth_lock=threading.Lock()
         self.tts_process=None;self.prewarm_phase='CORE'
         self.worker=threading.Thread(target=self._worker,daemon=True);self.worker.start()
@@ -254,16 +256,53 @@ class VoiceIO:
             self.pending=(text,self.generation,time.monotonic()+(3.5 if priority<90 else 2),valid,priority)
         return True
 
-    def follow(self,g):
+    def follow(self,g,valid=None):
         with self.lock:
-            key=(g['mode'],g['event_id'])
-            if g['mode']=='PAUSED':self.interrupt();return
+            mode=g['mode'];key=(mode,g['event_id'],g.get('speech'))
+            mode_changed=mode!=self.guidance_mode
+            self.guidance_mode=mode
+            if mode=='PAUSED' or (mode_changed and mode!='STANDING'):
+                self.cancel_record.set();self.interrupt()
+            if mode=='PAUSED':return
+            if (g.get('priority',0)>=90 and self.priority<90
+                    and (self.pending is not None or self.child is not None)):
+                self.interrupt()
             if self.auto and key!=self.last_event and self.last_event is not None:self.interrupt()
             if self.auto and key!=self.last_event and g.get('speech'):
                 try:
-                    if self.say(g['speech'],g['priority']):self.last_event=key
+                    if self.say(g['speech'],g['priority'],valid=valid):self.last_event=key
                 except ValueError:pass
             elif self.auto and not g.get('speech'):self.last_event=key
+
+    def _current(self,generation,valid):
+        with self.lock:
+            if self.stop_event.is_set() or generation!=self.generation:return False
+        try:return valid is None or bool(valid())
+        except Exception:return False
+
+    def _play_wav(self,wav,generation,expires,valid,env):
+        """Recheck queued and playing speech without waiting for another guidance tick."""
+        if time.monotonic()>expires or not self._current(generation,valid):return 'INVALIDATED'
+        with self.lock:
+            if generation!=self.generation:return 'INVALIDATED'
+            child=subprocess.Popen(['paplay','--device='+SINK],env=env,stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            self.child=child;self.status['tts_state']='PLAYING'
+        deadline=time.monotonic()+45;payload=wav
+        try:
+            while True:
+                if not self._current(generation,valid):return 'INVALIDATED'
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise TimeoutError('Audio playback deadline')
+                try:
+                    child.communicate(payload,timeout=min(.1,remaining))
+                    return 'FINISHED' if child.returncode==0 else 'INTERRUPTED_OR_FAILED'
+                except subprocess.TimeoutExpired:payload=None
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                try:child.communicate(timeout=1)
+                except subprocess.TimeoutExpired:child.kill();child.communicate()
 
     def _worker(self):
         env=dict(os.environ,PULSE_SERVER='unix:/run/user/1000/pulse/native',XDG_RUNTIME_DIR='/run/user/1000')
@@ -276,15 +315,11 @@ class VoiceIO:
                     neural_cached=('neural',text) in self.cache
                     neural_ready=(self.tts_process is not None and self.tts_process.poll() is None)
                 wav=self._wav(text,prefer_neural=neural_cached or priority<90 or neural_ready)
-                with self.lock:
-                    if generation!=self.generation or time.monotonic()>expires or (valid and not valid()):continue
-                    self.child=subprocess.Popen(['paplay','--device='+SINK],env=env,stdin=subprocess.PIPE,
-                        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-                    child=self.child;self.status['tts_state']='PLAYING';self.status['last_spoken']=text
-                child.communicate(wav,timeout=45)
+                state=self._play_wav(wav,generation,expires,valid,env)
                 with self.lock:
                     if generation==self.generation:
-                        self.status['tts_state']='FINISHED' if child.returncode==0 else 'INTERRUPTED_OR_FAILED'
+                        self.status['tts_state']=state
+                        if state=='FINISHED':self.status['last_spoken']=text
             except Exception as e:
                 with self.lock:self.status['tts_error']=type(e).__name__
             finally:
